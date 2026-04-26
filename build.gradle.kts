@@ -3,29 +3,39 @@ import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
-    id("org.jetbrains.kotlin.jvm")
-    id("org.jetbrains.intellij.platform")
-    id("org.jetbrains.changelog")
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
+    id("org.jetbrains.intellij.platform") version "2.15.0"
+    id("org.jetbrains.changelog") version "2.2.0"
 }
 
-dependencies {
-    testImplementation("junit:junit:4.13.2")
-
-    // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
+repositories {
+    mavenCentral()
     intellijPlatform {
-        intellijIdea("2025.2.6.1")
-        testFramework(TestFrameworkType.Platform)
+        defaultRepositories()
     }
 }
 
-// Configure IntelliJ Platform Gradle Plugin - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html
+dependencies {
+    intellijPlatform {
+        intellijIdea("2024.1")
+        testFramework(TestFrameworkType.Platform)
+    }
+    testImplementation("junit:junit:4.13.2")
+}
+
+// Changelog
+changelog {
+    groups.empty()
+    repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
+    versionPrefix = ""
+}
+
+// Plugin configuration
 intellijPlatform {
     pluginConfiguration {
-        // Extract the <!-- Plugin description --> section from README.md and provide for the plugin's manifest
         description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.map {
             val start = "<!-- Plugin description -->"
             val end = "<!-- Plugin description end -->"
-
             with(it.lines()) {
                 if (!containsAll(listOf(start, end))) {
                     throw GradleException("Plugin description section not found in README.md:\n$start ... $end")
@@ -34,8 +44,7 @@ intellijPlatform {
             }
         }
 
-        val changelog = project.changelog // local variable for configuration cache compatibility
-        // Get the latest available change notes from the changelog file
+        val changelog = project.changelog
         changeNotes = version.map { pluginVersion ->
             with(changelog) {
                 renderItem(
@@ -47,13 +56,6 @@ intellijPlatform {
             }
         }
     }
-}
-
-// Configure Gradle Changelog Plugin - read more: https://github.com/JetBrains/gradle-changelog-plugin
-changelog {
-    groups.empty()
-    repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
-    versionPrefix = ""
 }
 
 tasks {

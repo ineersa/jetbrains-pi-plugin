@@ -1,51 +1,174 @@
-# jetbrains-pi-plugin
+# Pi IDE Bridge — JetBrains Plugin
 
-![Build](https://github.com/ineersa/jetbrains-pi-plugin/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
+> Bridges IDE state (current file, selection, workspace) to Pi via `~/.pi/ide/` JSON files.
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [group](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml), [name](./src/main/resources/META-INF/plugin.xml), and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin description in `README` (see [Tips][docs:plugin-description])
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
+## Overview
 
-<!-- Plugin description -->
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
-
-This specific section is a source for the [plugin.xml](/src/main/resources/META-INF/plugin.xml) file which will be extracted by the [Gradle](/build.gradle.kts) during the build process.
-
-To keep everything working, do not remove `<!-- ... -->` sections. 
-<!-- Plugin description end -->
+This plugin tracks your active IDE state and writes it to a JSON file that Pi reads to understand context: which file you're editing, what you've selected, and which project you're working in. It supports **multiple IDEs simultaneously** — each IDE instance gets its own file.
 
 ## Installation
 
-- Using the IDE built-in plugin system:
+### From source
 
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "jetbrains-pi-plugin"</kbd> >
-  <kbd>Install</kbd>
+```bash
+git clone https://github.com/ineersa/jetbrains-pi-plugin.git
+cd jetbrains-pi-plugin
+./gradlew buildPlugin
+```
 
-- Using JetBrains Marketplace:
+The plugin ZIP is at `build/distributions/jetbrains-pi-plugin-*.zip`.
 
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
+### Install in IDE
 
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+1. Open your JetBrains IDE
+2. Go to **Settings/Preferences** → **Plugins** → **⚙️ (gear icon)** → **Install plugin from disk...**
+3. Select the `jetbrains-pi-plugin-*.zip` file
+4. Restart the IDE
 
-- Manually:
+### Development mode (run from source)
 
-  Download the [latest release](https://github.com/ineersa/jetbrains-pi-plugin/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+```bash
+./gradlew runIde
+```
 
+This launches a sandbox IntelliJ IDEA with the plugin pre-installed. Changes to source code are picked up on the next `runIde` run.
 
----
-Plugin based on the [IntelliJ Platform Plugin Template][template].
+## How It Works
 
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+### File Format
+
+On first run, the plugin creates `~/.pi/ide/` and writes a JSON file named `<ide-name>-<instance-uuid>.json`:
+
+```
+~/.pi/ide/
+  ├── intellij-abc123.json
+  ├── goland-def456.json
+  └── webstorm-ghi789.json
+```
+
+Each file contains compact JSON (shown here formatted for readability):
+
+```json
+{
+  "pid": 12345,
+  "ideName": "intellij",
+  "ideVersion": "2024.1",
+  "workspaceFolders": ["/home/user/my-project"],
+  "currentFile": "/home/user/my-project/src/main.ts",
+  "selection": {
+    "text": "function hello() { ... }",
+    "startLine": 10,
+    "endLine": 15
+  },
+  "timestamp": 1714000000000
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `pid` | OS process ID (for ancestry matching in Pi) |
+| `ideName` | Lowercase IDE identifier (`intellij`, `goland`, `webstorm`, etc.) |
+| `ideVersion` | IDE version string (e.g. `2024.1`) |
+| `workspaceFolders` | Array of open project root paths |
+| `currentFile` | Active editor file path (null if no file open) |
+| `selection` | Selected text + line range (null when nothing selected) |
+| `timestamp` | Unix ms, updated on every change |
+
+### Write Strategy
+
+- **Debounced**: 100ms delay after last change (avoids filesystem spam)
+- **Atomic**: writes to temp file then renames (prevents partial reads)
+- **Silent**: all errors caught and logged — never crashes the IDE
+- **Cleanup**: file deleted when IDE closes
+
+### Supported IDEs
+
+The plugin auto-detects the running IDE from `ApplicationInfo`:
+
+| IDE | `ideName` output |
+|-----|------------------|
+| IntelliJ IDEA | `intellij` |
+| GoLand | `goland` |
+| WebStorm | `webstorm` |
+| PyCharm | `pycharm` |
+| Rider | `rider` |
+| CLion | `clion` |
+| RubyMine | `rubymine` |
+| PhpStorm | `phpstorm` |
+| Android Studio | `android-studio` |
+| DataGrip | `datagrip` |
+| Other JetBrains | `jetbrains` |
+
+## Testing
+
+### Quick smoke test
+
+```bash
+# 1. Run the plugin in a sandbox IDE
+./gradlew runIde
+
+# 2. In the sandbox IDE, open any file and select some text
+
+# 3. In another terminal, check the output file
+ls -la ~/.pi/ide/
+cat ~/.pi/ide/*.json
+```
+
+You should see a JSON file with the current file path and selection.
+
+### Verify behavior
+
+| Action | Expected result |
+|--------|-----------------|
+| Open a file | `currentFile` updates, `selection` is null |
+| Select text | `selection` populated with text + line range |
+| Deselect | `selection` becomes null, `currentFile` stays |
+| Switch file | `currentFile` updates, `selection` cleared |
+| Close all editors | File deleted from `~/.pi/ide/` |
+| Open second IDE | Second `.json` file created with different UUID |
+
+### Programmatic test
+
+```bash
+# Watch for changes in real-time
+watch -n 1 'cat ~/.pi/ide/*.json 2>/dev/null || echo "no files yet"'
+```
+
+## Architecture
+
+```
+PiStartupActivity (project startup)
+  ├── EditorFactoryListener → SelectionListener (per editor)
+  └── FileEditorManagerListener → active file changes
+
+PiIdeService (application-level singleton)
+  ├── Debounced writes (100ms)
+  ├── Atomic file I/O (temp + rename)
+  └── Cleanup on dispose
+
+PiPreferences (persistent state)
+  └── Instance UUID (generated once)
+```
+
+## Pi-Side Matching
+
+When Pi reads the IDE files, it matches using this priority:
+
+1. **PID ancestry** — walk parent process tree, match `pid` field
+2. **Workspace match** — check if `process.cwd()` is inside `workspaceFolders`
+3. **Most recent** — highest `timestamp` fallback
+
+## Security
+
+- Files are only readable by the current user
+- No network exposure (filesystem-only)
+- No sensitive data (just paths and selection text)
+- Plugin doesn't read file contents (tracks active file path only)
+
+<!-- Plugin description -->
+Pi IDE Bridge — tracks your active file, selection, and workspace in JetBrains IDEs. Writes state to `~/.pi/ide/` as JSON for Pi to read. Supports multiple IDEs simultaneously with per-instance files.
+<!-- Plugin description end -->
+
+## License
+
+See [LICENSE](LICENSE) for details.
